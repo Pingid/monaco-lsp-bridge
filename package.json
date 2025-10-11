@@ -1,0 +1,68 @@
+{
+  "name": "monaco-lsp-bridge",
+  "version": "0.0.1",
+  "description": "Lightweight Monaco–LSP bridge with JSON-RPC transport",
+  "author": "Dan Beaven <dm.beaven@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Pingid/monaco-lsp-bridge.git"
+  },
+  "license": "MIT",
+  "type": "module",
+  "main": "lib/cjs/index.js",
+  "types": "lib/ts/index.d.ts",
+  "module": "lib/esm/index.js",
+  "sideEffects": false,
+  "exports": {
+    "./package.json": "./package.json",
+    ".": {
+      "types": "./lib/ts/index.d.ts",
+      "import": "./lib/esm/index.js",
+      "require": "./lib/cjs/index.js"
+    }
+  },
+  "files": [
+    "lib",
+    "src",
+    "README.md",
+    "package.json",
+    "!**/*.test.*",
+    "tsconfig.json"
+  ],
+  "keywords": [
+    "monaco",
+    "lsp",
+    "language-server",
+    "json-rpc",
+    "editor",
+    "diagnostics",
+    "completion",
+    "hover",
+    "formatting"
+  ],
+  "scripts": {
+    "build": "npm run typecheck && npm run esm && npm run cjs",
+    "format": "prettier --write .",
+    "esm": "tsc -p ./tsconfig.esm.json",
+    "cjs": "tsc -p ./tsconfig.cjs.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest"
+  },
+  "dependencies": {
+    "monaco-editor": "^0.54.0",
+    "vscode-languageserver-protocol": "^3.17.5"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.5",
+    "jsr": "^0.13.4",
+    "prettier": "^3.3.3",
+    "typescript": "^5.6.3",
+    "vitest": "^3.0.5"
+  },
+  "prettier": {
+    "semi": false,
+    "singleQuote": true,
+    "printWidth": 120,
+    "trailingComma": "all"
+  }
+}
