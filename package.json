@@ -1,6 +1,6 @@
 {
   "name": "monaco-lsp-bridge",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Lightweight Monaco–LSP bridge with JSON-RPC transport",
   "author": "Dan Beaven <dm.beaven@gmail.com>",
   "repository": {
@@ -49,10 +49,13 @@
     "test": "vitest"
   },
   "dependencies": {
-    "monaco-editor": "^0.54.0",
     "vscode-languageserver-protocol": "^3.17.5"
   },
+  "peerDependencies": {
+    "monaco-editor": ">=0.35.0"
+  },
   "devDependencies": {
+    "monaco-editor": "^0.54.0",
     "esbuild": "^0.25.5",
     "jsr": "^0.13.4",
     "prettier": "^3.3.3",

@@ -8,9 +8,6 @@ importers:
 
   .:
     dependencies:
-      monaco-editor:
-        specifier: ^0.54.0
-        version: 0.54.0
       vscode-languageserver-protocol:
         specifier: ^3.17.5
         version: 3.17.5
@@ -21,6 +18,9 @@ importers:
       jsr:
         specifier: ^0.13.4
         version: 0.13.4
+      monaco-editor:
+        specifier: ^0.54.0
+        version: 0.54.0
       prettier:
         specifier: ^3.3.3
         version: 3.5.3
