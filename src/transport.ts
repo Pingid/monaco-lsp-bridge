@@ -2,7 +2,6 @@ import type { ProgressToken } from 'vscode-languageserver-protocol'
 import type * as monaco from 'monaco-editor'
 
 import {
-  JSONRPC_VERSION,
   makeRequest,
   makeNotification,
   JsonRpcRequest,
@@ -12,8 +11,10 @@ import {
   JsonRpcResponse,
   JsonRpcNotification,
   ProgressPayload,
+  isRpcMessage,
+  isRpcRequestType,
+  isRpcResponseType,
   Id,
-  isId,
 } from './protocol.js'
 import { LspError, LspErrorCode, toLspError, isCancellationError } from './error.js'
 
@@ -96,7 +97,6 @@ export class LspTransport {
   /** Listen for error responses and forward normalized errors */
   onError(cb: (error: LspError) => void) {
     const onMessage = (res: JsonRpcResponse<any>) => {
-      if (res?.jsonrpc !== JSONRPC_VERSION) return
       if (res?.error) cb(toLspError(res.error))
     }
     this.disposables.add(this.subscribe(onMessage))
@@ -112,7 +112,7 @@ export class LspTransport {
   /** Register a callback for all $/progress notifications */
   onProgressNotification(callback: (params: ProgressPayload) => void) {
     const onMessage = (msg: any) => {
-      if (msg?.jsonrpc !== JSONRPC_VERSION || msg?.method !== '$/progress') return
+      if (msg?.method !== '$/progress') return
       if (msg.params) callback(msg.params)
     }
     this.disposables.add(this.subscribe(onMessage))
@@ -120,10 +120,13 @@ export class LspTransport {
   }
 
   /** Listen for a specific server notification method */
-  onServerNotification<K extends keyof ServerNotifMap>(method: K, cb: (params: ServerNotifMap[K][0]) => void) {
+  onServerNotification<K extends keyof ServerNotifMap>(
+    method: K,
+    cb: (params: ServerNotifMap[K]['fields']['params']) => void,
+  ) {
     const onMessage = (msg: any) => {
-      if (msg?.jsonrpc !== JSONRPC_VERSION || msg?.method !== method) return
-      cb(msg.params as ServerNotifMap[K][0])
+      if (msg?.method !== method) return
+      cb(msg.params as ServerNotifMap[K]['fields']['params'])
     }
     this.disposables.add(this.subscribe(onMessage))
     return this
@@ -152,7 +155,7 @@ export class LspTransport {
   // -------- Core API
 
   /** Send a client-to-server notification (no response expected) */
-  sendNotification<K extends keyof ClientNotifMap>(method: K, params: ClientNotifMap[K][0]) {
+  sendNotification<K extends keyof ClientNotifMap>(method: K, params: ClientNotifMap[K]['fields']['params']) {
     this.sender(makeNotification(method, params))
     return this
   }
@@ -160,7 +163,7 @@ export class LspTransport {
   /** Send an async request with timeout, cancellation and progress support */
   sendRequest<K extends keyof RequestMap>(
     method: K,
-    params: RequestMap[K][0],
+    params: RequestMap[K]['fields']['params'],
     opts?: {
       timeoutMs?: number
       signal?: AbortSignal
@@ -169,7 +172,7 @@ export class LspTransport {
       onProgress?: ProgressHandler
       onPartialResult?: PartialResultHandler
     },
-  ): Promise<MaybeCancelled<RequestMap[K][1]>> {
+  ): Promise<MaybeCancelled<RequestMap[K]['response']>> {
     const id = this.nextId++
 
     // Generate tokens if callbacks provided but tokens not specified
@@ -203,7 +206,7 @@ export class LspTransport {
 
     this.sender(m)
 
-    return new Promise<MaybeCancelled<RequestMap[K][1]>>((resolve, reject) => {
+    return new Promise<MaybeCancelled<RequestMap[K]['response']>>((resolve, reject) => {
       const resolveCancelled = (code: LspErrorCode.RequestCancelled | LspErrorCode.ServerCancelled) => {
         cleanup()
         resolve({ cancelled: true, code })
@@ -292,11 +295,11 @@ export class LspTransport {
     }
 
     // Early drop anything that isn't a proper JSON-RPC 2.0 message
-    if (!raw || typeof raw !== 'object' || raw.jsonrpc !== JSONRPC_VERSION) return
+    if (!isRpcMessage(raw)) return
 
     // Handle $/progress notifications
-    if (raw.method === '$/progress' && raw.params) {
-      const params = raw.params as ProgressPayload
+    if (isRpcRequestType('$/progress', raw)) {
+      const params = raw.params
       const callback = this.progressCallbacks.get(params.token)
       if (callback) {
         try {
@@ -312,17 +315,14 @@ export class LspTransport {
     }
 
     // If it's a response with an id and a waiting promise, resolve that first
-    if (Object.prototype.hasOwnProperty.call(raw, 'id')) {
-      const id = raw.id as Id
-      if (isId(id)) {
-        const waiter = this.waiters.get(id)
-        if (waiter) {
-          // Claim and stop propagation to generic handlers
-          this.waiters.delete(id)
-          try {
-            waiter(raw)
-          } catch {}
-        }
+    if (isRpcResponseType(raw)) {
+      const waiter = this.waiters.get(raw.id)
+      if (waiter) {
+        // Claim and stop propagation to generic handlers
+        this.waiters.delete(raw.id)
+        try {
+          waiter(raw)
+        } catch {}
       }
     }
 

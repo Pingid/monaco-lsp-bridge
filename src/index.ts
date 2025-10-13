@@ -17,7 +17,7 @@ import {
   toMonacoMarkers,
   toMonacoTextEdits,
   lspHoverToMonaco,
-} from './util.js'
+} from './transform.js'
 import { LspTransport, Transport } from './transport.js'
 import type { MaybeCancelled } from './transport.js'
 import { ProgressPayload } from './protocol.js'

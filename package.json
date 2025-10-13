@@ -1,6 +1,6 @@
 {
   "name": "monaco-lsp-bridge",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "Lightweight Monaco–LSP bridge with JSON-RPC transport",
   "author": "Dan Beaven <dm.beaven@gmail.com>",
   "repository": {
@@ -19,6 +19,11 @@
       "types": "./lib/ts/index.d.ts",
       "import": "./lib/esm/index.js",
       "require": "./lib/cjs/index.js"
+    },
+    "./protocol": {
+      "types": "./lib/ts/protocol.d.ts",
+      "import": "./lib/esm/protocol.js",
+      "require": "./lib/cjs/protocol.js"
     }
   },
   "files": [
