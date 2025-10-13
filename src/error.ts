@@ -38,11 +38,12 @@ export const isCancellationError = (e: unknown) =>
   'code' in (e as any) &&
   ((e as any).code === LspErrorCode.RequestCancelled || (e as any).code === LspErrorCode.ServerCancelled)
 
-export const toLspError = (e: any): LspError =>
-  e instanceof LspError
-    ? e
-    : new LspError({
-        code: Number(e?.code ?? LspErrorCode.InternalError),
-        message: String(e?.message ?? 'Error'),
-        data: e?.data,
-      })
+export const toLspError = (e: any): LspError => {
+  if (e instanceof LspError) return e
+  if (typeof e === 'string') return new LspError({ code: LspErrorCode.InternalError, message: e })
+  return new LspError({
+    code: Number(e?.code ?? LspErrorCode.InternalError),
+    message: String(e?.message ?? 'Error'),
+    data: e?.data,
+  })
+}

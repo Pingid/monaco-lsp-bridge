@@ -322,7 +322,6 @@ export class LspTransport {
           try {
             waiter(raw)
           } catch {}
-          return
         }
       }
     }
