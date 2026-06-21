@@ -28,6 +28,43 @@ import type {
   HoverRequest,
   HoverParams,
   Hover,
+  DefinitionRequest,
+  DefinitionParams,
+  TypeDefinitionRequest,
+  TypeDefinitionParams,
+  ImplementationRequest,
+  ImplementationParams,
+  DeclarationRequest,
+  DeclarationParams,
+  ReferencesRequest,
+  ReferenceParams,
+  DocumentHighlightRequest,
+  DocumentHighlightParams,
+  DocumentHighlight,
+  SignatureHelpRequest,
+  SignatureHelpParams,
+  SignatureHelp,
+  DocumentSymbolRequest,
+  DocumentSymbolParams,
+  DocumentSymbol,
+  SymbolInformation,
+  FoldingRangeRequest,
+  FoldingRangeParams,
+  FoldingRange,
+  PrepareRenameRequest,
+  PrepareRenameParams,
+  PrepareRenameResult,
+  RenameRequest,
+  RenameParams,
+  WorkspaceEdit,
+  CodeActionRequest,
+  CodeActionParams,
+  CodeActionResolveRequest,
+  CodeAction,
+  Command,
+  Definition,
+  Location,
+  LocationLink,
 } from 'vscode-languageserver-protocol'
 
 import { LspErrorShape } from './error.js'
@@ -49,6 +86,19 @@ export interface RequestMap {
   [DocumentRangeFormattingRequest.method]: RequestMapValue<DocumentRangeFormattingParams, TextEdit[] | null>
   [DocumentOnTypeFormattingRequest.method]: RequestMapValue<DocumentOnTypeFormattingParams, TextEdit[] | null>
   [HoverRequest.method]: RequestMapValue<HoverParams, Hover | null>
+  [DefinitionRequest.method]: RequestMapValue<DefinitionParams, Definition | LocationLink[] | null>
+  [TypeDefinitionRequest.method]: RequestMapValue<TypeDefinitionParams, Definition | LocationLink[] | null>
+  [ImplementationRequest.method]: RequestMapValue<ImplementationParams, Definition | LocationLink[] | null>
+  [DeclarationRequest.method]: RequestMapValue<DeclarationParams, Definition | LocationLink[] | null>
+  [ReferencesRequest.method]: RequestMapValue<ReferenceParams, Location[] | null>
+  [DocumentHighlightRequest.method]: RequestMapValue<DocumentHighlightParams, DocumentHighlight[] | null>
+  [SignatureHelpRequest.method]: RequestMapValue<SignatureHelpParams, SignatureHelp | null>
+  [DocumentSymbolRequest.method]: RequestMapValue<DocumentSymbolParams, DocumentSymbol[] | SymbolInformation[] | null>
+  [FoldingRangeRequest.method]: RequestMapValue<FoldingRangeParams, FoldingRange[] | null>
+  [PrepareRenameRequest.method]: RequestMapValue<PrepareRenameParams, PrepareRenameResult | null>
+  [RenameRequest.method]: RequestMapValue<RenameParams, WorkspaceEdit | null>
+  [CodeActionRequest.method]: RequestMapValue<CodeActionParams, (Command | CodeAction)[] | null>
+  [CodeActionResolveRequest.method]: RequestMapValue<CodeAction, CodeAction>
   shutdown: RequestMapValue<null, null>
 }
 

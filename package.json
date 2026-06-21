@@ -1,6 +1,6 @@
 {
   "name": "monaco-lsp-bridge",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "Lightweight Monaco–LSP bridge with JSON-RPC transport",
   "author": "Dan Beaven <dm.beaven@gmail.com>",
   "repository": {
@@ -9,29 +9,23 @@
   },
   "license": "MIT",
   "type": "module",
-  "main": "lib/cjs/index.js",
-  "types": "lib/ts/index.d.ts",
-  "module": "lib/esm/index.js",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "module": "lib/index.js",
   "sideEffects": false,
   "exports": {
     "./package.json": "./package.json",
     ".": {
-      "types": "./lib/ts/index.d.ts",
-      "import": "./lib/esm/index.js",
-      "require": "./lib/cjs/index.js"
-    },
-    "./protocol": {
-      "types": "./lib/ts/protocol.d.ts",
-      "import": "./lib/esm/protocol.js",
-      "require": "./lib/cjs/protocol.js"
+      "types": "./lib/index.d.ts",
+      "import": "./lib/index.js"
     }
   },
   "files": [
     "lib",
-    "src",
     "README.md",
     "package.json",
     "!**/*.test.*",
+    "!src/test-utils.ts",
     "tsconfig.json"
   ],
   "keywords": [
@@ -46,26 +40,22 @@
     "formatting"
   ],
   "scripts": {
-    "build": "npm run typecheck && npm run esm && npm run cjs",
+    "build": "tsc",
     "format": "prettier --write .",
-    "esm": "tsc -p ./tsconfig.esm.json",
-    "cjs": "tsc -p ./tsconfig.cjs.json",
-    "typecheck": "tsc --noEmit",
-    "test": "vitest"
+    "test": "vitest run 'src'",
+    "test:watch": "vitest"
   },
   "dependencies": {
-    "vscode-languageserver-protocol": "^3.17.5"
+    "vscode-languageserver-protocol": "^3.18.0"
   },
   "peerDependencies": {
     "monaco-editor": ">=0.35.0"
   },
   "devDependencies": {
-    "monaco-editor": "^0.54.0",
-    "esbuild": "^0.25.5",
-    "jsr": "^0.13.4",
-    "prettier": "^3.3.3",
-    "typescript": "^5.6.3",
-    "vitest": "^3.0.5"
+    "monaco-editor": "^0.55.1",
+    "prettier": "^3.8.4",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.9"
   },
   "prettier": {
     "semi": false,
