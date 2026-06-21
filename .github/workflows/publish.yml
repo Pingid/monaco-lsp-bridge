@@ -9,20 +9,26 @@ on:
   push:
     branches:
       - main
+      - dev
 
 jobs:
   release_github:
+    if: github.ref_name == 'main'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
         with:
           version: 10
-          run_install: true
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - name: install dependencies
+        run: pnpm install
       - name: transpile typescript
         run: pnpm run build
-      # - name: run tests
-      #   run: pnpm test
+      - name: run tests
+        run: pnpm test
       - name: Get latest release tag
         id: latest_release_tag
         run: |
@@ -40,36 +46,76 @@ jobs:
   publish_npm:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
         with:
           version: 10
-          run_install: true
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: 'https://registry.npmjs.org'
+      - name: Upgrade npm
+        run: npm install -g npm@latest
+      - name: install dependencies
+        run: pnpm install
       - name: transpile typescript
         run: pnpm run build
-      # - name: run tests
-      #   run: bun run test
-      - name: Get current version
-        id: current_version
-        run: echo "version=$(node -e 'console.log(require(`./package.json`).version)')" >> $GITHUB_OUTPUT
-      - name: Get latest version
+      - name: run tests
+        run: pnpm test
+      - name: Read package metadata
+        id: pkg
+        run: |
+          echo "name=$(node -p "require('./package.json').name")" >> $GITHUB_OUTPUT
+          echo "version=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
+      - name: Determine dist-tag
+        id: dist_tag
+        run: |
+          if [[ "${{ github.ref_name }}" == "dev" || "${{ steps.pkg.outputs.version }}" == *-* ]]; then
+            echo "tag=dev" >> $GITHUB_OUTPUT
+          else
+            echo "tag=latest" >> $GITHUB_OUTPUT
+          fi
+      - name: Get currently-published version on this dist-tag
         id: latest_version
-        run: echo "version=$(npm dist-tag ls | cut -d ' ' -f 2 | xargs echo)" >> $GITHUB_OUTPUT
-      - name: npm auth
-        run: echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}" > .npmrc
+        run: |
+          v=$(npm view "${{ steps.pkg.outputs.name }}@${{ steps.dist_tag.outputs.tag }}" version 2>/dev/null || echo "")
+          echo "version=$v" >> $GITHUB_OUTPUT
       - name: Publish package
-        if: ${{ steps.current_version.outputs.version != steps.latest_version.outputs.version }}
-        run: npm publish --access public --provenance
-  # publish_jsr:
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - uses: actions/checkout@v4
-  #     - uses: oven-sh/setup-bun@v2
-  #     - name: install dependencies
-  #       run: bun install
-  #     - name: transpile typescript
-  #       run: bun run build
-  #     - name: run tests
-  #       run: bun run test
-  #     - name: Publish package
-  #       run: bun jsr publish
+        if: ${{ steps.pkg.outputs.version != steps.latest_version.outputs.version }}
+        run: npm publish --access public --provenance --tag ${{ steps.dist_tag.outputs.tag }}
+
+  publish_jsr:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - name: install
+        run: pnpm install
+      - name: transpile
+        run: pnpm build
+      - name: test
+        run: pnpm test
+      - name: Read package metadata
+        id: pkg
+        run: |
+          echo "name=$(node -p "require('./package.json').name")" >> $GITHUB_OUTPUT
+          echo "version=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
+      - name: Sync jsr.json version from package.json
+        run: |
+          node -e "const fs=require('fs');const p=require('./package.json');const c=require('./jsr.json');c.name=p.name;c.version=p.version;fs.writeFileSync('./jsr.json',JSON.stringify(c,null,2)+'\n')"
+      - name: Check if version already published
+        id: published
+        run: |
+          if curl -sf "https://jsr.io/${{ steps.pkg.outputs.name }}/${{ steps.pkg.outputs.version }}_meta.json" > /dev/null; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+      - name: Publish package
+        if: ${{ steps.published.outputs.exists == 'false' }}
+        run: pnpm jsr publish --allow-dirty

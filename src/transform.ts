@@ -9,6 +9,18 @@ import type {
   Hover,
   MarkupContent,
   MarkedString,
+  Definition,
+  Location,
+  LocationLink,
+  DocumentHighlight,
+  SignatureHelp,
+  DocumentSymbol,
+  SymbolInformation,
+  FoldingRange,
+  WorkspaceEdit,
+  PrepareRenameResult,
+  CodeAction,
+  Command,
 } from 'vscode-languageserver-protocol'
 import type * as monaco from 'monaco-editor'
 
@@ -18,16 +30,21 @@ const LSP_ITEM_KEY = Symbol.for('__lsp_completion_item__')
 /** Convert LSP CompletionItem to Monaco and stash original */
 export const toMonacoCompletionItem = (
   monacoApi: typeof monaco,
+  model: monaco.editor.ITextModel,
+  position: monaco.Position,
   item: CompletionItem,
 ): monaco.languages.CompletionItem => {
   const insertText = getInsertText(item)
-  const range = toMonacoRange(item.textEdit)
+  const isSnippet = (item.insertTextFormat ?? 1) === 2
 
-  // Determine insert text format (snippet vs plain)
-  const insertTextFormat = item.insertTextFormat ?? 1 // 1 = PlainText, 2 = Snippet
-  const isSnippet = insertTextFormat === 2
+  // If LSP provided a textEdit range, convert it (support insert/replace if you have both)
+  const lspRange = toMonacoRange(item.textEdit) // return IRange or {insert, replace} | undefined
 
-  const result: any = {
+  // Fallback range must contain `position`
+  const word = model.getWordUntilPosition(position)
+  const fallbackRange = new monacoApi.Range(position.lineNumber, word.startColumn, position.lineNumber, position.column)
+
+  const result: monaco.languages.CompletionItem = {
     label: item.label,
     insertText,
     kind: item.kind ?? 0,
@@ -37,19 +54,12 @@ export const toMonacoCompletionItem = (
     filterText: item.filterText,
     commitCharacters: item.commitCharacters,
     additionalTextEdits: item.additionalTextEdits?.map(toMonacoTextEdit),
-    // Insert as snippet when requested
-    insertTextRules: isSnippet ? monacoApi.languages.CompletionItemInsertTextRule.InsertAsSnippet : undefined, // 4 = InsertAsSnippet
+    insertTextRules: isSnippet ? monacoApi.languages.CompletionItemInsertTextRule.InsertAsSnippet : undefined,
+    range: lspRange ?? fallbackRange,
   }
 
-  // Set explicit range only when provided by LSP
-  if (range !== undefined) {
-    result.range = range
-  }
-
-  // Keep original for resolve
-  result[LSP_ITEM_KEY] = item
-
-  return result as monaco.languages.CompletionItem
+  ;(result as any)[LSP_ITEM_KEY] = item
+  return result
 }
 
 /** Convert Monaco CompletionItem to LSP, preferring original */
@@ -240,9 +250,12 @@ export const toMonacoMarkers = (monacoApi: typeof monaco, diagnostics: Diagnosti
     }))
   }
 
+  // LSP >=3.18 allows MarkupContent messages; Monaco markers only take strings
+  const toMessage = (msg: string | { value: string }): string => (typeof msg === 'string' ? msg : msg.value)
+
   return diagnostics.map((d) => ({
     severity: toSeverity(d.severity),
-    message: d.message,
+    message: toMessage(d.message),
     code: typeof d.code === 'string' ? d.code : typeof d.code === 'number' ? String(d.code) : undefined,
     source: d.source,
     tags: toTags(d.tags),
@@ -297,4 +310,206 @@ export const lspHoverToMonaco = (hover: Hover): monaco.languages.Hover => {
   }
   if (hover.range) result.range = toMonacoIRange(hover.range)
   return result
+}
+
+/** Convert LSP markup/string to a Monaco markdown string */
+const toMonacoMarkup = (doc: string | MarkupContent | undefined): string | monaco.IMarkdownString | undefined =>
+  doc === undefined ? undefined : typeof doc === 'string' ? doc : { value: doc.value }
+
+// ---------------- Navigation ----------------
+
+const isLocationLink = (l: Location | LocationLink): l is LocationLink => 'targetUri' in l
+
+/** Convert a single LSP Location to Monaco */
+export const toMonacoLocation = (monacoApi: typeof monaco, loc: Location): monaco.languages.Location => ({
+  uri: monacoApi.Uri.parse(loc.uri),
+  range: toMonacoIRange(loc.range),
+})
+
+const toMonacoLocationLink = (monacoApi: typeof monaco, l: LocationLink): monaco.languages.LocationLink => ({
+  uri: monacoApi.Uri.parse(l.targetUri),
+  range: toMonacoIRange(l.targetRange),
+  targetSelectionRange: toMonacoIRange(l.targetSelectionRange),
+  ...(l.originSelectionRange ? { originSelectionRange: toMonacoIRange(l.originSelectionRange) } : {}),
+})
+
+/** Convert an LSP definition result (Location, Location[] or LocationLink[]) to Monaco */
+export const toMonacoLocations = (
+  monacoApi: typeof monaco,
+  result: Definition | LocationLink[] | null,
+): monaco.languages.Location[] | monaco.languages.LocationLink[] => {
+  if (!result) return []
+  const items = Array.isArray(result) ? result : [result]
+  const [first] = items
+  if (!first) return []
+  // LSP guarantees homogeneous arrays of either Location or LocationLink
+  return isLocationLink(first)
+    ? (items as LocationLink[]).map((l) => toMonacoLocationLink(monacoApi, l))
+    : (items as Location[]).map((l) => toMonacoLocation(monacoApi, l))
+}
+
+/** Convert LSP document highlights to Monaco (kind is 1-based -> 0-based) */
+export const toMonacoHighlights = (
+  monacoApi: typeof monaco,
+  highlights: DocumentHighlight[],
+): monaco.languages.DocumentHighlight[] =>
+  highlights.map((h) => ({
+    range: toMonacoIRange(h.range),
+    kind: h.kind ? ((h.kind - 1) as monaco.languages.DocumentHighlightKind) : monacoApi.languages.DocumentHighlightKind.Text,
+  }))
+
+/** Convert LSP signature help to Monaco */
+export const toMonacoSignatureHelp = (help: SignatureHelp): monaco.languages.SignatureHelp => ({
+  signatures: (help.signatures ?? []).map((s) => ({
+    label: s.label,
+    documentation: toMonacoMarkup(s.documentation),
+    parameters: (s.parameters ?? []).map((p) => ({ label: p.label, documentation: toMonacoMarkup(p.documentation) })),
+    ...(s.activeParameter != null ? { activeParameter: s.activeParameter } : {}),
+  })),
+  activeSignature: help.activeSignature ?? 0,
+  activeParameter: help.activeParameter ?? 0,
+})
+
+// ---------------- Symbols / folding ----------------
+
+const isSymbolInformation = (s: DocumentSymbol | SymbolInformation): s is SymbolInformation => 'location' in s
+
+/** Convert LSP document symbols (hierarchical or flat) to Monaco (kind 1-based -> 0-based) */
+export const toMonacoSymbols = (symbols: (DocumentSymbol | SymbolInformation)[]): monaco.languages.DocumentSymbol[] =>
+  symbols.map(toMonacoSymbol)
+
+const toMonacoSymbol = (s: DocumentSymbol | SymbolInformation): monaco.languages.DocumentSymbol => {
+  const range = toMonacoIRange(isSymbolInformation(s) ? s.location.range : s.range)
+  return {
+    name: s.name,
+    detail: isSymbolInformation(s) ? '' : (s.detail ?? ''),
+    kind: (s.kind - 1) as monaco.languages.SymbolKind,
+    tags: (s.tags ?? []) as monaco.languages.SymbolTag[],
+    containerName: isSymbolInformation(s) ? s.containerName : undefined,
+    range,
+    selectionRange: isSymbolInformation(s) ? range : toMonacoIRange(s.selectionRange),
+    children: !isSymbolInformation(s) && s.children ? s.children.map(toMonacoSymbol) : undefined,
+  }
+}
+
+/** Convert LSP folding ranges to Monaco (lines 0-based -> 1-based) */
+export const toMonacoFoldingRanges = (monacoApi: typeof monaco, ranges: FoldingRange[]): monaco.languages.FoldingRange[] =>
+  ranges.map((r) => ({
+    start: r.startLine + 1,
+    end: r.endLine + 1,
+    kind: foldingKind(monacoApi, r.kind),
+  }))
+
+const foldingKind = (monacoApi: typeof monaco, kind: string | undefined): monaco.languages.FoldingRangeKind | undefined => {
+  switch (kind) {
+    case 'comment':
+      return monacoApi.languages.FoldingRangeKind.Comment
+    case 'imports':
+      return monacoApi.languages.FoldingRangeKind.Imports
+    case 'region':
+      return monacoApi.languages.FoldingRangeKind.Region
+    default:
+      return undefined
+  }
+}
+
+// ---------------- Workspace edits / rename / code actions ----------------
+
+/** Convert an LSP WorkspaceEdit to Monaco (text edits only; file operations are skipped) */
+export const toMonacoWorkspaceEdit = (monacoApi: typeof monaco, edit: WorkspaceEdit): monaco.languages.WorkspaceEdit => {
+  const edits: monaco.languages.IWorkspaceTextEdit[] = []
+  const push = (uri: string, textEdits: TextEdit[], versionId: number | undefined) => {
+    const resource = monacoApi.Uri.parse(uri)
+    for (const te of textEdits) edits.push({ resource, textEdit: toMonacoTextEdit(te), versionId })
+  }
+
+  if (edit.changes) {
+    for (const [uri, textEdits] of Object.entries(edit.changes)) push(uri, textEdits, undefined)
+  }
+  if (edit.documentChanges) {
+    for (const dc of edit.documentChanges) {
+      if ('textDocument' in dc && 'edits' in dc) push(dc.textDocument.uri, dc.edits as TextEdit[], dc.textDocument.version ?? undefined)
+    }
+  }
+  return { edits }
+}
+
+/** Convert an LSP prepareRename result to a Monaco rename location (or rejection) */
+export const toMonacoRenameLocation = (
+  monacoApi: typeof monaco,
+  model: monaco.editor.ITextModel,
+  position: monaco.Position,
+  result: PrepareRenameResult | null,
+): monaco.languages.RenameLocation & monaco.languages.Rejection => {
+  const wordRange = () => {
+    const word = model.getWordAtPosition(position)
+    const range = word
+      ? new monacoApi.Range(position.lineNumber, word.startColumn, position.lineNumber, word.endColumn)
+      : new monacoApi.Range(position.lineNumber, position.column, position.lineNumber, position.column)
+    return { range, text: word?.word ?? '' }
+  }
+
+  if (!result) return { ...wordRange(), rejectReason: 'You cannot rename this element.' }
+  if ('placeholder' in result) return { range: toMonacoIRange(result.range), text: result.placeholder }
+  if ('defaultBehavior' in result) return wordRange()
+  const range = toMonacoIRange(result)
+  return { range, text: model.getValueInRange(range) }
+}
+
+/** Store the original LSP code action for codeAction/resolve */
+const LSP_CODE_ACTION_KEY = Symbol.for('__lsp_code_action__')
+export const getLspCodeAction = (a: monaco.languages.CodeAction): CodeAction | undefined =>
+  (a as any)[LSP_CODE_ACTION_KEY]
+
+const isCommandResult = (a: Command | CodeAction): a is Command => typeof (a as Command).command === 'string'
+
+const toMonacoCommand = (c: Command): monaco.languages.Command => ({
+  id: c.command,
+  title: c.title,
+  arguments: c.arguments,
+})
+
+/** Convert a single LSP code action or command to Monaco */
+export const toMonacoCodeAction = (monacoApi: typeof monaco, a: Command | CodeAction): monaco.languages.CodeAction => {
+  if (isCommandResult(a)) return { title: a.title, command: toMonacoCommand(a) }
+  const result: monaco.languages.CodeAction = {
+    title: a.title,
+    kind: a.kind,
+    isPreferred: a.isPreferred,
+    disabled: a.disabled?.reason,
+    edit: a.edit ? toMonacoWorkspaceEdit(monacoApi, a.edit) : undefined,
+    command: a.command ? toMonacoCommand(a.command) : undefined,
+  }
+  ;(result as any)[LSP_CODE_ACTION_KEY] = a
+  return result
+}
+
+/** Convert LSP code action results to Monaco */
+export const toMonacoCodeActions = (
+  monacoApi: typeof monaco,
+  actions: (Command | CodeAction)[],
+): monaco.languages.CodeAction[] => actions.map((a) => toMonacoCodeAction(monacoApi, a))
+
+/** Map Monaco markers back to LSP diagnostics (lossy; used for codeAction context) */
+export const toLspDiagnostics = (monacoApi: typeof monaco, markers: monaco.editor.IMarkerData[]): Diagnostic[] =>
+  markers.map((m) => ({
+    range: toLspRange(m),
+    message: m.message,
+    severity: fromMarkerSeverity(monacoApi, m.severity) as Diagnostic['severity'],
+    code: typeof m.code === 'object' ? m.code.value : m.code,
+    source: m.source,
+    tags: m.tags ? m.tags.map((t) => (t === monacoApi.MarkerTag.Unnecessary ? 1 : 2)) : undefined,
+  }))
+
+const fromMarkerSeverity = (monacoApi: typeof monaco, s: monaco.MarkerSeverity): number => {
+  switch (s) {
+    case monacoApi.MarkerSeverity.Error:
+      return 1
+    case monacoApi.MarkerSeverity.Warning:
+      return 2
+    case monacoApi.MarkerSeverity.Info:
+      return 3
+    default:
+      return 4
+  }
 }

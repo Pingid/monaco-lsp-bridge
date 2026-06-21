@@ -14,9 +14,21 @@ import {
   isRpcMessage,
   isRpcRequestType,
   isRpcResponseType,
+  isId,
   Id,
+  JSONRPC_VERSION,
 } from './protocol.js'
 import { LspError, LspErrorCode, toLspError, isCancellationError } from './error.js'
+
+/** Default replies for common server-to-client requests, to avoid stalling the server */
+const SERVER_REQUEST_DEFAULTS: Record<string, (params: any) => unknown> = {
+  'workspace/configuration': (params) => (params?.items ?? []).map(() => null),
+  'client/registerCapability': () => null,
+  'client/unregisterCapability': () => null,
+  'window/workDoneProgress/create': () => null,
+  'window/showMessageRequest': () => null,
+  'workspace/applyEdit': () => ({ applied: false }),
+}
 
 export type Transport = PostMessagePort | LspTransport
 
@@ -57,6 +69,9 @@ export class LspTransport {
   // Progress tracking (both work done progress and partial results use $/progress)
   private progressCallbacks = new Map<ProgressToken, ProgressHandler>()
 
+  // Handlers for server-to-client requests (override SERVER_REQUEST_DEFAULTS)
+  private serverRequestHandlers = new Map<string, (params: any) => unknown | Promise<unknown>>()
+
   /** Construct a binding over a sender/receiver transport */
   constructor(
     private readonly sender: (
@@ -72,7 +87,7 @@ export class LspTransport {
 
   // ---------------- Constructors ----------------
   /** Create a binding from a Worker-like endpoint */
-  static fromWorker(worker: PostMessagePort): LspTransport {
+  static fromPort(worker: PostMessagePort): LspTransport {
     const sender = (message: any) => worker.postMessage(message)
     const receiver = (cb: (message: any) => void) => {
       const handler = (e: { data: any }) => cb(e.data)
@@ -84,7 +99,7 @@ export class LspTransport {
 
   /** Infer a binding from either a worker or an existing binding */
   static infer(endpoint: Transport): LspTransport {
-    return endpoint instanceof LspTransport ? endpoint : LspTransport.fromWorker(endpoint)
+    return endpoint instanceof LspTransport ? endpoint : LspTransport.fromPort(endpoint)
   }
 
   // -------- Helpers
@@ -119,6 +134,12 @@ export class LspTransport {
     return this
   }
 
+  /** Register a handler that replies to a server-to-client request method */
+  onServerRequest(method: string, handler: (params: any) => unknown | Promise<unknown>): Disposable {
+    this.serverRequestHandlers.set(method, handler)
+    return () => this.serverRequestHandlers.delete(method)
+  }
+
   /** Listen for a specific server notification method */
   onServerNotification<K extends keyof ServerNotifMap>(
     method: K,
@@ -150,6 +171,7 @@ export class LspTransport {
     this.waiters.clear()
     this.subs.clear()
     this.progressCallbacks.clear()
+    this.serverRequestHandlers.clear()
   }
 
   // -------- Core API
@@ -286,6 +308,34 @@ export class LspTransport {
     return () => this.subs.delete(cb)
   }
 
+  /** Send a JSON-RPC response frame for a server-to-client request */
+  private sendResponse(id: Id, body: { result: unknown } | { error: LspError }) {
+    const frame =
+      'error' in body
+        ? {
+            jsonrpc: JSONRPC_VERSION,
+            id,
+            error: { code: body.error.code, message: body.error.message, data: body.error.data },
+          }
+        : { jsonrpc: JSONRPC_VERSION, id, result: body.result }
+    this.sender(frame as any)
+  }
+
+  /** Reply to a server-to-client request using a registered handler or a safe default */
+  private handleServerRequest = async (req: { id: Id; method: string; params: any }) => {
+    const handler = this.serverRequestHandlers.get(req.method) ?? SERVER_REQUEST_DEFAULTS[req.method]
+    if (!handler) {
+      return this.sendResponse(req.id, {
+        error: new LspError({ code: LspErrorCode.MethodNotFound, message: `Unhandled server request: ${req.method}` }),
+      })
+    }
+    try {
+      this.sendResponse(req.id, { result: await handler(req.params) })
+    } catch (e) {
+      this.sendResponse(req.id, { error: toLspError(e) })
+    }
+  }
+
   /** Ingest an incoming frame and dispatch to listeners/waiters */
   private ingest = (raw: any) => {
     // Batch: process each frame independently
@@ -296,6 +346,12 @@ export class LspTransport {
 
     // Early drop anything that isn't a proper JSON-RPC 2.0 message
     if (!isRpcMessage(raw)) return
+
+    // Server-to-client request: has both an id and a method. Reply so the server doesn't stall.
+    if (isId((raw as any).id) && typeof (raw as any).method === 'string') {
+      this.handleServerRequest(raw as any)
+      return
+    }
 
     // Handle $/progress notifications
     if (isRpcRequestType('$/progress', raw)) {

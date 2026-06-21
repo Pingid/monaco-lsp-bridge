@@ -1,6 +1,0 @@
-{
-  "extends": "./tsconfig.json",
-  "compilerOptions": { "noEmit": false, "outDir": "lib/cjs", "module": "commonjs", "moduleResolution": "node10" },
-  "include": ["src/**/*"],
-  "exclude": ["src/**/*.test.ts"]
-}
