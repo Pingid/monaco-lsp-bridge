@@ -30,46 +30,82 @@ const SERVER_REQUEST_DEFAULTS: Record<string, (params: any) => unknown> = {
   'workspace/applyEdit': () => ({ applied: false }),
 }
 
+/** Either a raw message port (e.g. a Worker) or an already-built transport. */
 export type Transport = PostMessagePort | LspTransport
 
+/** Minimal Worker/MessagePort-like surface the transport can drive. */
 export interface PostMessagePort {
+  /** Send a message to the other end. */
   postMessage(message: any): void
+  /** Subscribe to incoming messages. */
   addEventListener(type: 'message', listener: (event: { data: any }) => void): void
+  /** Unsubscribe a previously added listener. */
   removeEventListener(type: 'message', listener: (event: { data: any }) => void): void
 }
 
+/** A teardown function returned by subscriptions. */
 type Disposable = () => void
 
+/** Result marker for a request that was cancelled rather than completed. */
 export type Cancelled = {
+  /** Always true; discriminates from a successful result. */
   cancelled: true
+  /** Which side initiated the cancellation. */
   code: LspErrorCode.RequestCancelled | LspErrorCode.ServerCancelled
 }
 
+/** A request outcome: either a result or a {@link Cancelled} marker. */
 export type MaybeCancelled<T> = { cancelled: false; result: T } | Cancelled
 
+/** Callback receiving work-done progress values. */
 export type ProgressHandler<T = any> = (value: T) => void
+/** Callback receiving streamed partial results. */
 export type PartialResultHandler<T = any> = (partialResult: T) => void
 
+/**
+ * JSON-RPC transport over a message port (Web Worker, MessagePort, etc.).
+ *
+ * Handles request/response correlation, timeouts, cancellation via
+ * `AbortSignal`, `$/progress` routing, and replies to server-to-client
+ * requests. Notifications and responses fan out to subscribers.
+ *
+ * @example
+ * ```ts
+ * const worker = new Worker(new URL('./server.worker.js', import.meta.url), { type: 'module' })
+ * const transport = LspTransport.fromPort(worker)
+ *
+ * const res = await transport.sendRequest('initialize', { capabilities: {} } as any)
+ * if (!res.cancelled) console.log(res.result.capabilities)
+ *
+ * transport.onServerNotification('textDocument/publishDiagnostics', (p) => console.log(p))
+ * // later: transport.dispose()
+ * ```
+ */
 export class LspTransport {
+  /** Monotonic counter for request ids. */
   private nextId = 1
+  /** Monotonic counter for generated progress tokens. */
   private nextTokenId = 1
+  /** Teardown functions run on {@link dispose}. */
   private disposables: Set<Disposable> = new Set()
 
-  // Fire-and-forget requests handled by withHandlers()
+  /** In-flight requests awaiting handling. */
   private pending = new Map<Id, JsonRpcRequest<keyof RequestMap, any>>()
 
-  // Async bookkeeping
+  /** Pending timeout timers keyed by request id. */
   private timeouts = new Map<Id, ReturnType<typeof setTimeout>>()
+  /** Reject callbacks so {@link dispose} can fail in-flight requests. */
   private rejectors = new Map<Id, (err: LspError) => void>()
 
-  // Central dispatcher: subscribers + per-id waiters (for sendAsync)
+  /** Generic subscribers fed every inbound frame. */
   private subs = new Set<(message: any) => void>()
+  /** Per-id response resolvers for {@link sendRequest}. */
   private waiters = new Map<Id, (res: JsonRpcResponse<any>) => void>()
 
-  // Progress tracking (both work done progress and partial results use $/progress)
+  /** Progress callbacks keyed by token (work-done and partial results). */
   private progressCallbacks = new Map<ProgressToken, ProgressHandler>()
 
-  // Handlers for server-to-client requests (override SERVER_REQUEST_DEFAULTS)
+  /** Handlers for server-to-client requests (override {@link SERVER_REQUEST_DEFAULTS}). */
   private serverRequestHandlers = new Map<string, (params: any) => unknown | Promise<unknown>>()
 
   /** Construct a binding over a sender/receiver transport */

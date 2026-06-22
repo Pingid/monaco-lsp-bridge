@@ -30,7 +30,7 @@ const editor = monaco.editor.create(document.getElementById('root')!, {
 
 // 2) Create a transport to your LSP server (e.g. Web Worker)
 const worker = new Worker(new URL('./server.worker.js', import.meta.url), { type: 'module' })
-const transport = LspTransport.fromWorker(worker)
+const transport = LspTransport.fromPort(worker)
 
 // 3) Start the client
 const client = new LspMonacoClient(transport, {

@@ -39,38 +39,89 @@ import { ProgressPayload } from './protocol.js'
 import type { RequestMap } from './protocol.js'
 import type { LspError } from './error.js'
 
+/** The Monaco editor namespace (`typeof monaco`). */
 type Monaco = typeof monaco
 
-// Event types
+/** Events emitted by {@link LspMonacoClient} via {@link LspMonacoClient.onEvent}. */
 export type ClientEvent =
+  /** Server initialized; carries its negotiated capabilities. */
   | { type: 'initialized'; capabilities: InitializeResult['capabilities'] }
+  /** An error response or transport failure occurred. */
   | { type: 'error'; error: LspError }
+  /** A work-done progress notification was received. */
   | { type: 'workDoneProgress'; params: ProgressPayload }
+  /** The server logged a message (`window/logMessage`). */
   | { type: 'logMessage'; method: string; params: any }
+  /** Graceful shutdown failed during dispose. */
   | { type: 'shutdownError'; error: unknown }
 
+/** Handler invoked for each {@link ClientEvent}. */
 export type ClientEventHandler = (event: ClientEvent) => void
 
+/** Options for constructing an {@link LspMonacoClient}. */
 export type MonacoLspClientOptions = {
+  /** Languages/documents this client should provide features for. */
   languageSelector: monaco.languages.LanguageSelector
-  /** Send shutdown/exit on dispose when server is dedicated */
+  /** Send `shutdown`/`exit` on dispose when the server is dedicated. */
   dedicatedServer?: boolean
+  /** Override the default `initialize` params sent to the server. */
   initialParams?: InitializeParams
 }
 
+/**
+ * Bridges a Monaco editor to an LSP server over a {@link Transport}.
+ *
+ * On {@link connect} it initializes the server, registers Monaco language
+ * providers for the capabilities the server advertises (completion, hover,
+ * navigation, formatting, rename, code actions, ...), syncs document
+ * open/change/close, and maps diagnostics to editor markers.
+ *
+ * @example
+ * ```ts
+ * import * as monaco from 'monaco-editor'
+ * import { LspMonacoClient, LspTransport } from 'monaco-lsp-bridge'
+ *
+ * const editor = monaco.editor.create(document.getElementById('root')!, {
+ *   value: 'function main() {}',
+ *   language: 'javascript',
+ * })
+ *
+ * const worker = new Worker(new URL('./server.worker.js', import.meta.url), { type: 'module' })
+ * const client = new LspMonacoClient(LspTransport.fromPort(worker), {
+ *   languageSelector: { language: 'javascript' },
+ *   dedicatedServer: true,
+ * })
+ *
+ * client.onEvent((e) => { if (e.type === 'error') console.error(e.error) })
+ * client.connect(monaco, editor)
+ * // later: await client.dispose()
+ * ```
+ */
 export class LspMonacoClient {
+  /** `clientInfo.name` sent during initialize. */
   static CLIENT_NAME = 'monaco-lsp-bridge'
+  /** `clientInfo.version` sent during initialize. */
   static CLIENT_VERSION = '0.0.1'
 
+  /** The connected editor, or null before {@link connect}. */
   private editor: monaco.editor.ICodeEditor | null = null
+  /** The active Monaco namespace, or null before {@link connect}. */
   private monaco: Monaco | null = null
+  /** Underlying JSON-RPC transport. */
   private binding: LspTransport
+  /** The endpoint used to (re)create {@link binding} on connect. */
   private endpoint: Transport
-  private openDocuments = new Set<string>() // Track opened document URIs
+  /** URIs of documents currently open on the server. */
+  private openDocuments = new Set<string>()
+  /** Whether the `initialize` handshake completed. */
   private initialized = false
+  /** Registered client-event handlers. */
   private eventHandlers = new Set<ClientEventHandler>()
-  private syncKind: number = 0 // 0=None, 1=Full, 2=Incremental
-  private syncChange = false // whether the server wants didChange notifications
+  /** Server text-document sync kind: 0=None, 1=Full, 2=Incremental. */
+  private syncKind: number = 0
+  /** Whether the server wants `didChange` notifications. */
+  private syncChange = false
+  /** Marker owner string used when publishing diagnostics. */
   private readonly MARKER_OWNER = 'lsp-diagnostics'
 
   /** Construct a Monaco LSP client bound to an endpoint */

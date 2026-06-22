@@ -41,6 +41,7 @@
   ],
   "scripts": {
     "build": "tsc",
+    "docs:build": "ldocs build",
     "format": "prettier --write .",
     "test": "vitest run 'src'",
     "test:watch": "vitest"
@@ -52,6 +53,7 @@
     "monaco-editor": ">=0.35.0"
   },
   "devDependencies": {
+    "@lickle/docs": "0.0.2-dev.1",
     "monaco-editor": "^0.55.1",
     "prettier": "^3.8.4",
     "typescript": "^6.0.3",
